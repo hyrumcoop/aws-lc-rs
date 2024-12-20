@@ -135,6 +135,26 @@ impl UnboundKey {
     }
 
     #[inline]
+    pub(crate) fn seal_to_append_tag<'a, In, Out>(
+        &self,
+        nonce: Option<Nonce>,
+        aad: &[u8],
+        input: &'a In,
+        extra_input: &'a In,
+        output: &'a mut Out,
+    ) -> Result<Nonce, Unspecified>
+    where
+        In: AsRef<[u8]>,
+        Out: AsMut<[u8]> + for<'out> Extend<&'out u8>,
+    {
+        self.check_per_nonce_max_bytes(input.as_ref().len() + extra_input.as_ref().len())?;
+        match nonce {
+            Some(nonce) => self.seal_to_combined(nonce, aad, input, extra_input, output),
+            None => panic!("Not currently supported"),
+        }
+    }
+
+    #[inline]
     pub(crate) fn seal_in_place_separate_tag(
         &self,
         nonce: Option<Nonce>,
@@ -328,6 +348,62 @@ impl UnboundKey {
                     nonce.len(),
                     mut_in_out.as_ptr(),
                     plaintext_len,
+                    aad.as_ptr(),
+                    aad.len(),
+                )
+            }) {
+                return Err(Unspecified);
+            }
+        }
+
+        Ok(nonce)
+    }
+
+    #[inline]
+    fn seal_to_combined<In, Out>(
+        &self,
+        nonce: Nonce,
+        aad: &[u8],
+        input: &In,
+        extra_in: &In,
+        output: &mut Out,
+    ) -> Result<Nonce, Unspecified>
+    where
+        In: AsRef<[u8]>,
+        Out: AsMut<[u8]> + for<'out> Extend<&'out u8>,
+    {
+        let in_len = input.as_ref().len();
+        let extra_len = extra_in.as_ref().len();
+        let alg_tag_len = self.algorithm().tag_len();
+
+        debug_assert!(alg_tag_len <= MAX_TAG_LEN);
+
+        let tag_buffer = [0u8; MAX_TAG_LEN+1]; // TODO: +1 isn't exactly right right now... But this is just a prototype
+
+        output.extend(tag_buffer[..extra_len+alg_tag_len].iter());
+        let out_tag_ptr = output.as_mut()[in_len..].as_mut_ptr();
+
+        let mut out_tag_len = MaybeUninit::<usize>::uninit();
+        let mut_output = output.as_mut();
+
+        {
+            let nonce = nonce.as_ref();
+
+            debug_assert_eq!(nonce.len(), self.algorithm().nonce_len());
+
+            if 1 != indicator_check!(unsafe {
+                EVP_AEAD_CTX_seal_scatter(
+                    *self.ctx.as_ref().as_const(),
+                    mut_output.as_mut_ptr(),
+                    out_tag_ptr,
+                    out_tag_len.as_mut_ptr(),
+                    extra_len+alg_tag_len,
+                    nonce.as_ptr(),
+                    nonce.len(),
+                    input.as_ref().as_ptr(),
+                    in_len,
+                    extra_in.as_ref().as_ptr(),
+                    extra_in.as_ref().len(),
                     aad.as_ptr(),
                     aad.len(),
                 )

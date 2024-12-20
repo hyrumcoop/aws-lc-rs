@@ -112,6 +112,26 @@ impl TlsRecordSealingKey {
             .map(|_| ())
     }
 
+    /// Sorry for bad documentation
+    #[inline]
+    pub fn seal_to_append_tag<A, In, Out>(
+        &self,
+        nonce: Nonce,
+        aad: Aad<A>,
+        input: &In,
+        extra_input: &In,
+        output: &mut Out,
+    ) -> Result<(), Unspecified>
+    where
+        A: AsRef<[u8]>,
+        In: AsRef<[u8]>,
+        Out: AsMut<[u8]> + for<'out> Extend<&'out u8>,
+    {
+        self.key
+            .seal_to_append_tag(Some(nonce), aad.as_ref(), input, extra_input, output)
+            .map(|_| ())
+    }
+
     /// Encrypts and signs (“seals”) data in place.
     ///
     /// `aad` is the additional authenticated data (AAD), if any. This is
